@@ -16,9 +16,10 @@ import (
 func TestEnabled(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
-	handler := slogloki.NewHandler(nil, slogloki.HandlerOptions{
+	handler, err := slogloki.NewHandler(nil, slogloki.HandlerOptions{
 		Level: slog.LevelInfo,
 	})
+	require.Nil(err)
 	ctx := context.Background()
 	require.False(handler.Enabled(ctx, slog.LevelDebug))
 	require.True(handler.Enabled(ctx, slog.LevelInfo))
@@ -51,12 +52,13 @@ func TestHandle(t *testing.T) {
 	ctx := context.Background()
 	require := require.New(t)
 	client := MockedClient{}
-	handler := slogloki.NewHandler(&client, slogloki.HandlerOptions{
+	handler, err := slogloki.NewHandler(&client, slogloki.HandlerOptions{
 		DefaultAttrs: []slog.Attr{slog.String("a", "b")},
 		// IsMetadata: func(group string, a slog.Attr) bool {
 		// 	return strings.HasPrefix(a.String(), "metadata")
 		// },
 	})
+	require.Nil(err)
 	handler = handler.
 		WithAttrs([]slog.Attr{
 			slog.String("foo1", "bar1"),
@@ -119,9 +121,9 @@ func TestHandle(t *testing.T) {
 			map[string]string{
 				"a":              "b",
 				"foo1":           "bar1",
-				"baz1.foo2":      "bar2",
-				"baz1.baz2.foo3": "bar3",
-				"fizz.buzz":      "buzz",
+				"baz1_foo2":      "bar2",
+				"baz1_baz2_foo3": "bar3",
+				"fizz_buzz":      "buzz",
 				"true":           "true",
 				"level":          rec.Level.String(),
 			},

@@ -2,6 +2,8 @@ package lokislog
 
 import (
 	"context"
+	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -35,7 +37,9 @@ type HandlerOptions struct {
 	MetadataHandler MetadataHandler
 }
 
-func NewHandler(client loki.Client, o HandlerOptions) slog.Handler {
+var lableNameRegex = regexp.MustCompile("^[a-zA-Z_:][a-zA-Z0-9_:]*$")
+
+func NewHandler(client loki.Client, o HandlerOptions) (slog.Handler, error) {
 	if o.Level == nil {
 		o.Level = slog.LevelDebug
 	}
@@ -49,7 +53,12 @@ func NewHandler(client loki.Client, o HandlerOptions) slog.Handler {
 		o.LevelKey = "level"
 	}
 	if o.GroupSplitter == "" {
-		o.GroupSplitter = "."
+		o.GroupSplitter = "_"
+	} else {
+		if !lableNameRegex.Match([]byte(o.GroupSplitter)) {
+			return nil, fmt.Errorf("GroupSplitter not valid. Metric names may contain ASCII letters, digits, underscores, and colons. It must match the regex [a-zA-Z_:][a-zA-Z0-9_:]*.")
+		}
+
 	}
 	if o.MetadataHandler == nil {
 		o.MetadataHandler = func(groups []string, attr slog.Attr) (metaGroups []string, metaAttr slog.Attr, isMetadata bool) {
@@ -71,7 +80,7 @@ func NewHandler(client loki.Client, o HandlerOptions) slog.Handler {
 		lb: newLabelBuilder(o.GroupSplitter, o.MetadataHandler).withAttrs(o.DefaultAttrs),
 
 		client: client,
-	}
+	}, nil
 }
 
 var _ slog.Handler = (*LokiHandler)(nil)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"strconv"
@@ -103,7 +104,7 @@ func (c *clientImpl) Log(ts time.Time, msg string, lables, metadata map[string]s
 	}
 
 	c.entries <- push.Stream{
-		Labels: mapToLablesString(lables),
+		Labels: labelsMapToString(lables),
 		Entries: []push.Entry{
 			{
 				Timestamp:          ts,
@@ -158,7 +159,7 @@ LOOP:
 			}
 			wait.Reset(c.maxBatchWait)
 		}
-		if err != nil {
+		if err != nil && c.errCallback != nil {
 			c.errCallback(err)
 		}
 	}
@@ -176,7 +177,7 @@ func (c *clientImpl) send(streams []push.Stream) error {
 	}
 
 	var body []byte
-	var contentType string
+	var contentType, contentEncoding string
 	var err error
 	if c.useJson {
 		contentType = "application/json"
@@ -186,6 +187,7 @@ func (c *clientImpl) send(streams []push.Stream) error {
 		}
 	} else {
 		contentType = "application/x-protobuf"
+		contentEncoding = "snappy"
 		body, err = push.Marshal()
 		if err != nil {
 			return fmt.Errorf("unable to marshal PushRequest: %w", err)
@@ -193,23 +195,32 @@ func (c *clientImpl) send(streams []push.Stream) error {
 		body = s2.EncodeSnappy(nil, body)
 	}
 
-	req, err := http.NewRequest("POST", c.endpoint, bytes.NewBuffer(body))
+	req, err := http.NewRequest(http.MethodPost, c.endpoint, bytes.NewBuffer(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", contentType)
+	if contentEncoding != "" {
+		req.Header.Set("Content-Encoding", contentEncoding)
+	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("http request error: %w", err)
 	}
+
+	if resp.StatusCode != 204 {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("read response body: %w", err)
+		}
+
+		return fmt.Errorf("unexpected HTTP status code: %d, message: %s", resp.StatusCode, string(body))
+	}
+
 	err = resp.Body.Close()
 	if err != nil {
 		return fmt.Errorf("unable to close HTTP response body: %w", err)
-	}
-
-	if resp.StatusCode != 204 {
-		return fmt.Errorf("unexpected HTTP status code: %d, message: %s", resp.StatusCode, string(body))
 	}
 
 	return nil
@@ -230,11 +241,7 @@ func mapToAdapter(ls map[string]string) []push.LabelAdapter {
 	return adapters
 }
 
-func mapToLablesString(ls map[string]string) string {
-	if ls == nil {
-		return ""
-	}
-
+func labelsMapToString(ls map[string]string) string {
 	var b strings.Builder
 	totalSize := 2
 	lstrs := make([]string, 0, len(ls))
