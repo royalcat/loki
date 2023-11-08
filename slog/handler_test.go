@@ -54,9 +54,6 @@ func TestHandle(t *testing.T) {
 	client := MockedClient{}
 	handler, err := slogloki.NewHandler(&client, slogloki.HandlerOptions{
 		DefaultAttrs: []slog.Attr{slog.String("a", "b")},
-		// IsMetadata: func(group string, a slog.Attr) bool {
-		// 	return strings.HasPrefix(a.String(), "metadata")
-		// },
 	})
 	require.Nil(err)
 	handler = handler.

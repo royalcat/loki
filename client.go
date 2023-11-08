@@ -134,8 +134,10 @@ func (c *clientImpl) Shutdown(ctx context.Context) {
 	c.waitGroup.Wait()
 }
 
+type batch map[string][]push.Entry
+
 func (c *clientImpl) run() {
-	batch := make([]push.Stream, 0, c.maxBatchSize)
+	b := make(batch, c.maxBatchSize)
 	wait := time.NewTimer(c.maxBatchWait)
 
 	var err error
@@ -145,17 +147,17 @@ LOOP:
 		case <-c.quit:
 			break LOOP
 		case entry := <-c.entries:
-			batch = append(batch, entry) // TODO batch optimization by combining streams with same lables
-			if len(batch) >= int(c.maxBatchSize) {
-				err = c.send(batch)
-				batch = make([]push.Stream, 0, c.maxBatchSize)
+			b[entry.Labels] = append(b[entry.Labels], entry.Entries...)
+			if len(b) >= int(c.maxBatchSize) {
+				err = c.send(b)
+				b = make(batch, c.maxBatchSize)
 				wait.Reset(c.maxBatchWait)
 			}
 
 		case <-wait.C:
-			if len(batch) > 0 {
-				err = c.send(batch)
-				batch = make([]push.Stream, 0, c.maxBatchSize)
+			if len(b) > 0 {
+				err = c.send(b)
+				b = make(batch, c.maxBatchSize)
 			}
 			wait.Reset(c.maxBatchWait)
 		}
@@ -165,15 +167,21 @@ LOOP:
 	}
 
 	for entry := range c.entries {
-		batch = append(batch, entry)
+		b[entry.Labels] = append(b[entry.Labels], entry.Entries...)
 	}
-	c.send(batch)
+	c.send(b)
 	c.waitGroup.Done()
 }
 
-func (c *clientImpl) send(streams []push.Stream) error {
-	push := push.PushRequest{
-		Streams: streams, // TODO optimize by grouping streams with same lables
+func (c *clientImpl) send(batch batch) error {
+	pushReq := push.PushRequest{
+		Streams: make([]push.Stream, 0, len(batch)),
+	}
+	for l, e := range batch {
+		pushReq.Streams = append(pushReq.Streams, push.Stream{
+			Labels:  l,
+			Entries: e,
+		})
 	}
 
 	var body []byte
@@ -181,14 +189,14 @@ func (c *clientImpl) send(streams []push.Stream) error {
 	var err error
 	if c.useJson {
 		contentType = "application/json"
-		body, err = json.Marshal(push)
+		body, err = json.Marshal(pushReq)
 		if err != nil {
 			return err
 		}
 	} else {
 		contentType = "application/x-protobuf"
 		contentEncoding = "snappy"
-		body, err = push.Marshal()
+		body, err = pushReq.Marshal()
 		if err != nil {
 			return fmt.Errorf("unable to marshal PushRequest: %w", err)
 		}

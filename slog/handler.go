@@ -12,7 +12,7 @@ import (
 	"github.com/royalcat/loki"
 )
 
-type MetadataHandler func(group []string, attr slog.Attr) (metaGroup []string, metaAttr slog.Attr, isMetadata bool)
+type LabelHandler func(group []string, attr slog.Attr) (isLabel bool, keyOverwrite string)
 
 type HandlerOptions struct {
 	// log level (default: debug)
@@ -34,7 +34,7 @@ type HandlerOptions struct {
 	// Func to dynamically split attributes between labels and static metadata, this will never be called on group.
 	//
 	// By default any label in group "static_metadata" or longer than 1024 symbols will be moved to static metadata
-	MetadataHandler MetadataHandler
+	LabelHandler LabelHandler
 }
 
 var lableNameRegex = regexp.MustCompile("^[a-zA-Z_:][a-zA-Z0-9_:]*$")
@@ -60,16 +60,9 @@ func NewHandler(client loki.Client, o HandlerOptions) (slog.Handler, error) {
 		}
 
 	}
-	if o.MetadataHandler == nil {
-		o.MetadataHandler = func(groups []string, attr slog.Attr) (metaGroups []string, metaAttr slog.Attr, isMetadata bool) {
-			if len(attr.Value.String()) > 1024 {
-				return groups, attr, true
-			}
-			if len(groups) > 0 && groups[0] == "static_metadata" {
-				return groups[1:], attr, true
-			}
-
-			return nil, slog.Attr{}, false
+	if o.LabelHandler == nil {
+		o.LabelHandler = func(groups []string, attr slog.Attr) (isLabel bool, keyOverwrite string) {
+			return false, ""
 		}
 	}
 
@@ -77,7 +70,7 @@ func NewHandler(client loki.Client, o HandlerOptions) (slog.Handler, error) {
 		level:    o.Level,
 		levelKey: o.LevelKey,
 
-		lb: newLabelBuilder(o.GroupSplitter, o.MetadataHandler).withAttrs(o.DefaultAttrs),
+		lb: newLabelBuilder(o.GroupSplitter, o.LabelHandler).withAttrs(o.DefaultAttrs),
 
 		client: client,
 	}, nil
@@ -103,7 +96,7 @@ func (h *LokiHandler) Handle(ctx context.Context, record slog.Record) error {
 	metadata := make(map[string]string, len(h.lb.metadata))
 
 	labels, metadata = h.lb.build(labels, metadata)
-	labels, metadata = newLabelBuilder(h.lb.groupSplitter, h.lb.isMetadata).withAttrs(getAttrs(record)).build(labels, metadata)
+	labels, metadata = newLabelBuilder(h.lb.groupSplitter, h.lb.LabelHandler).withAttrs(getAttrs(record)).build(labels, metadata)
 
 	labels[h.levelKey] = record.Level.String()
 
@@ -128,15 +121,15 @@ type labelBuilder struct {
 	labels   map[string]string
 	metadata map[string]string
 
-	isMetadata MetadataHandler
+	LabelHandler LabelHandler
 }
 
-func newLabelBuilder(groupSplitter string, isMetadata MetadataHandler) labelBuilder {
+func newLabelBuilder(groupSplitter string, labelHandler LabelHandler) labelBuilder {
 	return labelBuilder{
 		groupSplitter: groupSplitter,
 		labels:        map[string]string{},
 		metadata:      map[string]string{},
-		isMetadata:    isMetadata,
+		LabelHandler:  labelHandler,
 	}
 }
 
@@ -148,13 +141,14 @@ func (b labelBuilder) withAttrs(attrs []slog.Attr) labelBuilder {
 		case slog.KindGroup:
 			b.withGroup(a.Key).withAttrs(a.Value.Group()).build(b.labels, b.metadata)
 		default:
-
-			if group, attr, isMetadata := b.isMetadata(b.group, a); isMetadata {
-				key := strings.Join(append(group, a.Key), b.groupSplitter)
-				b.metadata[key] = attr.Value.String()
-			} else {
-				key := strings.Join(append(b.group, a.Key), b.groupSplitter)
+			key := strings.Join(append(b.group, a.Key), b.groupSplitter)
+			if isLabel, override := b.LabelHandler(b.group, a); isLabel {
+				if override != "" {
+					key = override
+				}
 				b.labels[key] = a.Value.String()
+			} else {
+				b.metadata[key] = a.Value.String()
 			}
 		}
 
