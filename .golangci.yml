@@ -1,0 +1,23 @@
+linters:
+  enable:
+    - revive
+    # - exhaustruct
+    - nakedret
+    - gomoddirectives
+    - importas
+    - misspell
+    - promlinter
+    - prealloc
+    - predeclared
+    - stylecheck
+    - ineffassign
+    - dupl
+    - govet
+    - staticcheck
+    - unused
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - durationcheck
+    - errcheck

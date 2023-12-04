@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	"log/slog"
 
@@ -27,10 +26,6 @@ type HandlerOptions struct {
 
 	GroupSplitter string
 
-	// log batching
-	BatchWait time.Duration
-	BatchSize uint
-
 	// Func to dynamically split attributes between labels and static metadata, this will never be called on group.
 	//
 	// By default any label in group "static_metadata" or longer than 1024 symbols will be moved to static metadata
@@ -43,12 +38,6 @@ func NewHandler(client loki.Client, o HandlerOptions) (slog.Handler, error) {
 	if o.Level == nil {
 		o.Level = slog.LevelDebug
 	}
-	if o.BatchWait == 0 {
-		o.BatchWait = 5 * time.Second
-	}
-	if o.BatchSize == 0 {
-		o.BatchSize = 5
-	}
 	if o.LevelKey == "" {
 		o.LevelKey = "level"
 	}
@@ -56,7 +45,7 @@ func NewHandler(client loki.Client, o HandlerOptions) (slog.Handler, error) {
 		o.GroupSplitter = "_"
 	} else {
 		if !lableNameRegex.Match([]byte(o.GroupSplitter)) {
-			return nil, fmt.Errorf("GroupSplitter not valid. Metric names may contain ASCII letters, digits, underscores, and colons. It must match the regex [a-zA-Z_:][a-zA-Z0-9_:]*.")
+			return nil, fmt.Errorf("GroupSplitter not valid. Metric names may contain ASCII letters, digits, underscores, and colons. It must match the regex '[a-zA-Z_:][a-zA-Z0-9_:]*.'")
 		}
 
 	}
@@ -91,7 +80,7 @@ func (h *LokiHandler) Enabled(_ context.Context, level slog.Level) bool {
 	return level >= h.level.Level()
 }
 
-func (h *LokiHandler) Handle(ctx context.Context, record slog.Record) error {
+func (h *LokiHandler) Handle(_ context.Context, record slog.Record) error {
 	labels := make(map[string]string, 1+len(h.lb.labels))
 	metadata := make(map[string]string, len(h.lb.metadata))
 

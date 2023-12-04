@@ -33,11 +33,11 @@ type MockedClient struct {
 }
 
 // Flush implements loki.Client.
-func (*MockedClient) Flush(ctx context.Context) {
+func (*MockedClient) Flush(_ context.Context) {
 }
 
 // Shutdown implements loki.Client.
-func (*MockedClient) Shutdown(ctx context.Context) {
+func (*MockedClient) Shutdown(_ context.Context) {
 }
 
 // Log implements loki.Client.

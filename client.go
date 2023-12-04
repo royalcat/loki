@@ -26,18 +26,18 @@ type ClientOptions struct {
 	// Max batch size
 	BatchSize uint
 
-	// Callback what called on every error ocurred in sender.
+	// Callback what called on every error occurred in sender.
 	// Due to asynchronous nature of sender errors cant be suppied with return values/
 	ErrorCallback func(err error)
 
 	// by default uses http.DefaultClient
-	HttpClient HttpClient
+	HTTPClient HTTPClient
 
 	// User json instead of protobuf for log pushing
-	UseJson bool
+	UseJSON bool
 }
 
-type HttpClient interface {
+type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
@@ -61,8 +61,8 @@ type clientImpl struct {
 	maxBatchSize int
 	maxBatchWait time.Duration
 
-	useJson bool
-	client  HttpClient
+	useJSON bool
+	client  HTTPClient
 }
 
 // Creates a loki client for v1 api with automatic batching.
@@ -73,8 +73,14 @@ func NewClient(endpoint string, o *ClientOptions) (Client, error) {
 		o = &ClientOptions{}
 	}
 
-	if o.HttpClient == nil {
-		o.HttpClient = http.DefaultClient
+	if o.HTTPClient == nil {
+		o.HTTPClient = http.DefaultClient
+	}
+	if o.BatchWait == 0 {
+		o.BatchWait = time.Second
+	}
+	if o.BatchSize == 0 {
+		o.BatchSize = 5
 	}
 
 	client := clientImpl{
@@ -84,12 +90,16 @@ func NewClient(endpoint string, o *ClientOptions) (Client, error) {
 		maxBatchSize: int(o.BatchSize),
 		maxBatchWait: o.BatchWait,
 
-		quit:        make(chan struct{}),
+		quit:  make(chan struct{}),
+		flush: make(chan struct{}),
+
 		entries:     make(chan push.Stream, 1),
 		errCallback: o.ErrorCallback,
 
-		client:  o.HttpClient,
-		useJson: o.UseJson,
+		client:  o.HTTPClient,
+		useJSON: o.UseJSON,
+
+		waitGroup: sync.WaitGroup{},
 	}
 
 	client.waitGroup.Add(1)
@@ -138,7 +148,7 @@ type batch map[string][]push.Entry
 
 func (c *clientImpl) run() {
 	b := make(batch, c.maxBatchSize)
-	wait := time.NewTimer(c.maxBatchWait)
+	wait := time.NewTicker(c.maxBatchWait)
 
 	var err error
 LOOP:
@@ -169,7 +179,10 @@ LOOP:
 	for entry := range c.entries {
 		b[entry.Labels] = append(b[entry.Labels], entry.Entries...)
 	}
-	c.send(b)
+	err = c.send(b)
+	if err != nil {
+		c.errCallback(err)
+	}
 	c.waitGroup.Done()
 }
 
@@ -187,7 +200,7 @@ func (c *clientImpl) send(batch batch) error {
 	var body []byte
 	var contentType, contentEncoding string
 	var err error
-	if c.useJson {
+	if c.useJSON {
 		contentType = "application/json"
 		body, err = json.Marshal(pushReq)
 		if err != nil {
